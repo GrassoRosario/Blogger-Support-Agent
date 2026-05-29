@@ -1,0 +1,28 @@
+# Variabili d'ambiente
+.env
+
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Neo4j dati locali
+data/
+
+# Modelli HuggingFace cachati
+.cache/
+
+# LangGraph
+.langgraph/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

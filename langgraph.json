@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "blog_turistico": "./src/graph.py:graph"
+  },
+  "env": ".env"
+}

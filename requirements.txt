@@ -1,0 +1,34 @@
+# ==============================================================
+# Installazione dipendenze per BLOGGER_AGENT
+# Eseguire con il virtual environment attivo:
+#   .\.venv\Scripts\Activate.ps1
+#   pip install -r requirements.txt
+# ==============================================================
+
+# LangChain core
+langchain
+langchain-core
+langchain-community
+
+# LLM - Gemini
+langchain-google-genai
+
+# LangGraph
+langgraph
+langgraph-cli
+langgraph-checkpoint
+
+# Neo4j
+neo4j
+
+# Embeddings locali
+sentence-transformers
+
+# PDF
+pypdf
+
+# Variabili d'ambiente
+python-dotenv
+
+# Tavily
+tavily-python
