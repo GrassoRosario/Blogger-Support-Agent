@@ -1,31 +1,66 @@
+"""
+Nodo Planner del grafo LangGraph per il blog turistico italiano.
+
+Responsabilità:
+- Controlla se esistono PostPianificati nel KG
+- Se sì: prende il più vecchio e lo usa come piano_corrente
+- Se no: genera K nuovi piani tramite regioni_disponibili() e Search,
+         salva i K-1 piani rimanenti nel KG, usa il primo come piano_corrente
+
+Non chiama direttamente l'LLM: delega la scelta del topic al tool Search.
+"""
+
 import random
 from langchain_core.tools import tool
-from database.kg_operations import (
+from kg_operations import (
     regioni_disponibili,
     topic_per_regione,
     prossimo_post_pianificato,
     inserisci_post_pianificati,
 )
+from search_tool import search_tool
 
 
 # ==============================================================
-# Tool Search (placeholder — sarà implementato separatamente)
+# Tool Search per il Planner
 # ==============================================================
 
-@tool
-def search_tool(regione: str, topic_da_evitare: list[str]) -> str:
+def _cerca_topic(regione: str, topic_da_evitare: list[str]) -> str:
     """
-    Cerca su internet un topic di interesse turistico per la regione indicata,
-    escludendo i topic già trattati.
+    Costruisce una query e usa search_tool per trovare un topic
+    turistico da trattare per la regione indicata.
 
     Args:
         regione:          Nome della regione italiana (es. "Sicilia")
-        topic_da_evitare: Topic già trattati in post precedenti per questa regione
+        topic_da_evitare: Topic già trattati in post precedenti
 
     Returns:
         Nome del topic suggerito (es. "Valle dei Templi di Agrigento")
     """
-    raise NotImplementedError("Il tool Search non è ancora implementato.")
+    da_evitare = ", ".join(topic_da_evitare) if topic_da_evitare else "nessuno"
+    query = (
+        f"luoghi turistici da visitare in {regione} Italia "
+        f"escludendo: {da_evitare}"
+    )
+    risultati = search_tool.invoke({"query": query})
+
+    # Chiede a Gemini di estrarre il topic migliore dai risultati
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import HumanMessage
+    import os
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.5-flash",
+        google_api_key=os.environ.get("GEMINI_API_KEY"),
+        temperature=0,
+    )
+    risposta = llm.invoke([HumanMessage(content=(
+        f"Dai seguenti risultati di ricerca su luoghi turistici in {regione}, "
+        f"scegli UN solo luogo o monumento specifico da visitare "
+        f"(non già presente in questa lista: {da_evitare}). "
+        f"Rispondi SOLO con il nome del luogo, niente altro.\n\n{risultati}"
+    ))])
+    return risposta.content.strip()
 
 
 # ==============================================================
@@ -67,10 +102,7 @@ def planner_node(state: dict) -> dict:
         piani_generati = []
         for regione in regioni_scelte:
             da_evitare = topic_per_regione(regione)
-            topic = search_tool.invoke({
-                "regione": regione,
-                "topic_da_evitare": da_evitare
-            })
+            topic = _cerca_topic(regione, da_evitare)
             piani_generati.append({"regione": regione, "topic": topic})
 
         # Il primo piano diventa piano_corrente,

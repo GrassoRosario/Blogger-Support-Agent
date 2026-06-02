@@ -2,139 +2,158 @@
 Indicizzazione di documenti PDF nel Neo4j Vector Index.
 
 Uso:
-    python indexer.py <percorso_pdf_o_cartella> [--forza]
-
-Dipendenze:
-    pip install langchain langchain-community neo4j pypdf sentence-transformers
+    python indexer.py <percorso_pdf_o_cartella>
+    python indexer.py <percorso_pdf_o_cartella> --unesco
 """
 
 import os
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Neo4jVector
-from neo4j import GraphDatabase
+import sys
+import pypdf
 
-# ==============================================================
-# Configurazione
-# ==============================================================
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_neo4j import Neo4jVector
 
-NEO4J_URI  = "bolt://localhost:7687"
-MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-
-INDEX_NAME     = "documenti_turistici"
-NODE_LABEL     = "Documento"
-TEXT_PROPERTY  = "testo"
-EMBEDDING_PROP = "embedding"
-
-NEO4J_VECTOR_KWARGS = dict(
-    url=NEO4J_URI,
-    username="",
-    password="",
-    index_name=INDEX_NAME,
-    node_label=NODE_LABEL,
-    text_node_property=TEXT_PROPERTY,
-    embedding_node_property=EMBEDDING_PROP,
-)
-
-driver = GraphDatabase.driver(NEO4J_URI, auth=None)
-embeddings = HuggingFaceEmbeddings(model_name=MODEL_NAME)
+from config import driver, NEO4J_VECTOR_KWARGS, carica_embeddings
+from indexer_unesco import indicizza_pdf_unesco
 
 
-# ==============================================================
-# Controllo duplicati
-# ==============================================================
+# ============================================================
+# EMBEDDINGS SINGLETON (IMPORTANTE PER PERFORMANCE)
+# ============================================================
 
-def _pdf_gia_indicizzato(percorso_pdf: str) -> bool:
+_embeddings = None
+
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        print("Inizializzazione embeddings...")
+        _embeddings = carica_embeddings()
+    return _embeddings
+
+
+# ============================================================
+# CHECK GIA INDICIZZATO
+# ============================================================
+
+def gia_indicizzato(percorso: str) -> bool:
     with driver.session() as session:
-        result = session.run("""
-            MATCH (d:Documento)
-            WHERE d.source = $source
-            RETURN count(d) AS totale
-        """, source=percorso_pdf)
-        return result.single()["totale"] > 0
+        result = session.run(
+            "MATCH (d:Documento) WHERE d.source = $source RETURN count(d) AS n",
+            source=percorso,
+        )
+        return result.single()["n"] > 0
 
 
-# ==============================================================
-# Indicizzazione
-# ==============================================================
+# ============================================================
+# PDF STANDARD INDEXER
+# ============================================================
 
-def indicizza_pdf(percorso_pdf: str, forza: bool = False):
-    """
-    Carica un PDF, lo divide in chunk e lo indicizza nel Neo4j Vector Index.
-    Salta l'indicizzazione se il PDF è già presente, a meno che forza=True.
+def indicizza_pdf(percorso: str, embeddings=None):
+    print(f"Caricamento: {percorso}")
 
-    Args:
-        percorso_pdf: Percorso al file PDF (es. "documenti/colosseo.pdf")
-        forza:        Se True, reindicizza anche se già presente (default False)
-    """
-    if not forza and _pdf_gia_indicizzato(percorso_pdf):
-        print(f"  → Già indicizzato, salto: {percorso_pdf}")
-        return
+    reader = pypdf.PdfReader(percorso)
 
-    print(f"Caricamento: {percorso_pdf}")
-
-    # Carica ogni pagina come un documento separato e inserisce i metadati source e page
-    loader = PyPDFLoader(percorso_pdf)
-    pagine = loader.load()
+    pagine = [
+        Document(
+            page_content=p.extract_text() or "",
+            metadata={"source": percorso, "page": i},
+        )
+        for i, p in enumerate(reader.pages)
+    ]
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500,
-        chunk_overlap=200,
-        separators=["\n\n", "\n", ". ", " "]
+        chunk_size=500,
+        chunk_overlap=100
     )
-    chunks = splitter.split_documents(pagine)
-    print(f"  → {len(chunks)} chunk generati")
+
+    chunks = [
+        c for c in splitter.split_documents(pagine)
+        if len(c.page_content.strip()) >= 100
+    ]
+
+    if not chunks:
+        print(" Nessun testo estratto.")
+        return
 
     Neo4jVector.from_documents(
         documents=chunks,
-        embedding=embeddings,
+        embedding=embeddings or get_embeddings(),
         **NEO4J_VECTOR_KWARGS,
     )
-    print(f"  → Indicizzazione completata.")
+
+    print(f"  → {len(chunks)} chunk indicizzati.")
 
 
-def indicizza_cartella(cartella: str, forza: bool = False):
-    """
-    Indicizza tutti i PDF presenti in una cartella.
+# ============================================================
+# SINGLE FILE PIPELINE
+# ============================================================
 
-    Args:
-        cartella: Percorso alla cartella (es. "documenti/")
-        forza:    Se True, reindicizza tutto (default False)
-    """
-    pdf_files = [
+def indicizza_file(percorso: str, use_unesco: bool = False):
+    if gia_indicizzato(percorso):
+        print(f"  → Già indicizzato, salto: {percorso}")
+        return
+
+    embeddings = get_embeddings()
+
+    if use_unesco:
+        indicizza_pdf_unesco(percorso, embeddings)
+    else:
+        indicizza_pdf(percorso, embeddings)
+
+
+# ============================================================
+# CARTELLA PIPELINE
+# ============================================================
+
+def indicizza_cartella(cartella: str, use_unesco: bool = False):
+    files = [
         os.path.join(cartella, f)
         for f in os.listdir(cartella)
-        if f.endswith(".pdf")
+        if f.lower().endswith(".pdf")
     ]
 
-    if not pdf_files:
+    if not files:
         print(f"Nessun PDF trovato in: {cartella}")
         return
 
-    for percorso in pdf_files:
-        indicizza_pdf(percorso, forza=forza)
+    file_da_elaborare = [
+        f for f in files if not gia_indicizzato(f)
+    ]
 
-    print(f"\nIndicizzazione completata: {len(pdf_files)} documenti processati.")
+    if not file_da_elaborare:
+        print("\nTutti i documenti sono già stati processati.")
+        return
+
+    embeddings = get_embeddings()
+
+    for f in file_da_elaborare:
+        if use_unesco:
+            indicizza_pdf_unesco(f, embeddings)
+        else:
+            indicizza_pdf(f, embeddings)
+
+    print(f"\nCompletato: {len(file_da_elaborare)} documenti processati.")
 
 
-# ==============================================================
-# Entry point
-# ==============================================================
+# ============================================================
+# MAIN
+# ============================================================
 
 if __name__ == "__main__":
-    import sys
-    forza = "--forza" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--forza"]
-
-    if not args:
-        print("Uso: python indexer.py <percorso_pdf_o_cartella> [--forza]")
+    if len(sys.argv) < 2:
+        print("Uso: python indexer.py <percorso_pdf_o_cartella> [--unesco]")
         sys.exit(1)
 
-    percorso = args[0]
-    if os.path.isdir(percorso):
-        indicizza_cartella(percorso, forza=forza)
-    elif percorso.endswith(".pdf"):
-        indicizza_pdf(percorso, forza=forza)
+    percorso = sys.argv[1]
+    use_unesco = "--unesco" in sys.argv
+
+    if os.path.isfile(percorso):
+        indicizza_file(percorso, use_unesco)
+
+    elif os.path.isdir(percorso):
+        indicizza_cartella(percorso, use_unesco)
+
     else:
-        print("Errore: specificare un file PDF o una cartella.")
+        print("Errore: specificare un file PDF o una cartella valida.")
+        sys.exit(1)

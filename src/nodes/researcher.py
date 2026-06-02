@@ -22,10 +22,10 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from database.kg_operations import claim_esistenti_per_topic, fonti_per_regione
-from tools.retriever_tool import retriever_tool
-from tools.rag_tool import rag_tool
-from  tools.search_tool import search_tool, think_tool
+from kg_operations import claim_esistenti_per_topic, fonti_per_regione
+from retriever_tool import retriever_tool
+from rag_tool import rag_tool
+from search_tool import search_tool, think_tool
 
 
 # ==============================================================
@@ -99,11 +99,12 @@ Devi popolare TUTTE le seguenti sezioni:
 - claim: lista di affermazioni fattuali verificabili (date, misure, fatti storici)
 - fonti: lista delle fonti usate con URL
 
-Strategia suggerita:
-1. Controlla prima i claim già pubblicati nel KG per evitare ripetizioni
+Strategia:
+1. Controlla prima i claim già pubblicati nel KG (kg_claim_tool) per evitare ripetizioni
 2. Cerca nei documenti locali con rag_tool o retriever_tool
-3. Integra con search_tool per informazioni non trovate localmente
-4. Verifica le fonti già usate per la regione con kg_fonti_tool
+3. Usa search_tool per informazioni non trovate localmente (max 5 chiamate)
+4. Dopo ogni ricerca usa think_tool per valutare cosa hai trovato e cosa manca
+5. Fermati quando tutte le sezioni sono sufficientemente popolate
 
 Quando hai popolato tutte le sezioni, restituisci un JSON con questa struttura:
 {
@@ -143,7 +144,7 @@ def researcher_node(state: dict) -> dict:
     # Crea l'agente ReAct con i tool disponibili
     agent = create_react_agent(
         model=llm,
-        tools=[rag_tool, retriever_tool, kg_claim_tool, kg_fonti_tool, search_tool, think_tool],
+        tools=[rag_tool, retriever_tool, search_tool, think_tool, kg_claim_tool, kg_fonti_tool],
         prompt=SYSTEM_PROMPT,
     )
 
