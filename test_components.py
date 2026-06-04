@@ -154,7 +154,7 @@ def test_search():
     from src.tools.search_tool import search_tool
 
     risultato = search_tool.invoke({"query": "cosa vedere in Sicilia monumenti storici"})
-    print(risultato[:500])
+    print(risultato)
     assert "Nessun risultato" not in risultato, "Nessun risultato trovato — verifica TAVILY_API_KEY"
     print("✓ Search OK")
 

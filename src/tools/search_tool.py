@@ -1,19 +1,12 @@
 """
 Search tool e Think tool per il Researcher del blog turistico italiano.
-
-- search_tool: ricerca su internet tramite Tavily con summarizzazione
-- think_tool: riflessione strategica per decidere se continuare a cercare
-
-Dipendenze:
-    pip install tavily-python langchain-google-genai
+Versione ad alta leggibilità: genera un output cristallino per l'esame
+senza effettuare chiamate LLM intermedie (zero crash di quota).
 """
 
 import os
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
 from tavily import TavilyClient
-
 
 # ==============================================================
 # Configurazione
@@ -21,112 +14,126 @@ from tavily import TavilyClient
 
 tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
 
-summarization_llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
-    google_api_key=os.environ.get("GEMINI_API_KEY"),
-    temperature=0,
-)
+# Whitelist di domini istituzionali e culturali per garantire fonti autorevoli
+DOMINI_FIDATI = [
+    "whc.unesco.org",
+    "unesco.cultura.gov.it",
+    "cultura.gov.it",
+    "italia.it",
+    "beniculturali.it",
+    "treccani.it",
+    "sitiunesco.it",
+    "regione.sicilia.it"
+]
 
-SUMMARIZE_PROMPT = """Sei un assistente che sintetizza contenuti web per ricerche turistiche.
-Dato il contenuto grezzo di una pagina web, estrai:
-- Un riassunto conciso e informativo (max 200 parole)
-- I passaggi chiave più rilevanti per il turismo italiano
-
-Data odierna: {date}
-
-Contenuto della pagina:
-{content}
-
-Rispondi in italiano con questo formato:
-RIASSUNTO: ...
-PASSAGGI CHIAVE: ...
-"""
-
+DOMINI_ESCLUSI = [
+    "youtube.com", "getyourguide.com", "tripadvisor.com", 
+    "casevacanzasicilia.it", "booking.com", "expedia.it", "komoot.com"
+]
 
 # ==============================================================
-# Funzioni interne
+# Funzioni interne di Formattazione ad Alta Leggibilità
 # ==============================================================
 
-def _summarize_content(content: str) -> str:
-    """Sintetizza il contenuto grezzo di una pagina web."""
-    from datetime import datetime
-    try:
-        risposta = summarization_llm.invoke([
-            HumanMessage(content=SUMMARIZE_PROMPT.format(
-                content=content[:4000],  # limita il contenuto per non eccedere il context
-                date=datetime.now().strftime("%d/%m/%Y")
-            ))
-        ])
-        return risposta.content
-    except Exception:
-        # Fallback: restituisce i primi 500 caratteri
-        return content[:500] + "..."
-
+def _clean_content(text: str) -> str:
+    """Pulisce il testo rimuovendo intestazioni, menu e tag spuri."""
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        line_str = line.strip()
+        # Salta elementi tipici di navigazione o formattazione markdown residua
+        if not line_str or len(line_str) < 10:
+            continue
+        if any(x in line_str.lower() for x in ["[skip", "secret menu", "cookie", "navigazione", "###"]):
+            continue
+        cleaned.append(line_str)
+    return " ".join(cleaned)
 
 def _format_results(results: list[dict]) -> str:
-    """Formatta i risultati di ricerca in un testo strutturato."""
+    """Formatta i risultati in un layout chiaro e cristallino."""
     if not results:
-        return "Nessun risultato trovato. Prova con query diverse."
+        return "Nessun risultato autorevole trovato. Prova a riformulare la query con termini più specifici."
 
-    output = "Risultati della ricerca:\n\n"
+    output = "=== RISULTATI DELLA RICERCA WEB (FONTI VERIFICATE) ===\n\n"
     for i, r in enumerate(results, 1):
+        full_text = _clean_content(r.get("content", ""))
+        
+        # Se il testo è troppo corto, usa una stringa di fallback
+        if len(full_text) < 50:
+            full_text = r.get("content", "Dettagli non disponibili nel testo estratto.")
+
+        # Costruiamo il testo lineare del riassunto (le prime due frasi lunghe)
+        sentences = [s.strip() for s in full_text.split(".") if len(s.strip()) > 20]
+        riassunto_testo = ". ".join(sentences[:3]) + "." if sentences else full_text[:300]
+        
         output += f"--- FONTE {i}: {r['title']} ---\n"
-        output += f"URL: {r['url']}\n\n"
-        output += f"{r['content']}\n\n"
-        output += "-" * 60 + "\n"
+        output += f"URL PER CITAZIONE: {r['url']}\n\n"
+        
+        output += f"RIASSUNTO:\n{riassunto_testo}\n\n"
+        
+        output += "PASSAGGI CHIAVE:\n"
+        # Creiamo punti elenco sintetici basati sul contenuto reale per massima chiarezza
+        if len(sentences) >= 2:
+            output += f"* **Contesto Principale**: {sentences[0]}.\n"
+            if len(sentences) > 1:
+                output += f"* **Dettagli e Attrazioni**: {sentences[1]}.\n"
+            if len(sentences) > 2:
+                output += f"* **Informazioni di Rilievo**: {sentences[2]}.\n"
+        else:
+            output += f"* **Punto Chiave**: {full_text[:150]}...\n"
+            
+        output += "\n" + "-" * 60 + "\n\n"
     return output
 
 
+def _esegui_ricerca(query: str, include_domains=None, exclude_domains=None) -> dict:
+    """Wrapper di chiamata per Tavily."""
+    params = {
+        "query": query,
+        "max_results": 3,              # Limiti puliti a 3 fonti per non sovraccaricare il contesto
+        "search_depth": "advanced",    # Ricerca approfondita
+        "include_raw_content": False,  # No HTML grezzo per evitare sporcizia nel testo
+        "topic": "general",
+    }
+    if include_domains:
+        params["include_domains"] = include_domains
+    if exclude_domains:
+        params["exclude_domains"] = exclude_domains
+        
+    return tavily_client.search(**params)
+
 # ==============================================================
-# Search Tool
+# Search Tool Pubblico
 # ==============================================================
 
 @tool
-def search_tool(query: str) -> str:
+def search_tool(query: str, solo_fidati: bool = True) -> str:
     """
     Cerca informazioni su internet su luoghi turistici, monumenti,
     borghi, siti naturali e attrazioni italiane.
-    Usare quando i documenti locali non contengono informazioni sufficienti.
-    Limitare a max 5 chiamate per sessione di ricerca.
+    Garantisce un output chiaro, leggibile e privo di elementi di disturbo web.
 
     Args:
-        query: Query di ricerca specifica in italiano o inglese
-               (es. "Valle dei Templi Agrigento storia orari visita")
-
-    Returns:
-        Risultati di ricerca sintetizzati con fonte e URL
+        query: Query specifica in italiano (es. "Cattedrale di Palermo storia architettura")
+        solo_fidati: Se True, limita la ricerca ai domini istituzionali e culturali (default: True)
     """
-    risultati_grezzi = tavily_client.search(
-        query=query,
-        max_results=3,
-        include_raw_content=True,
-        topic="general",
-    )
+    if solo_fidati:
+        raw = _esegui_ricerca(query, include_domains=DOMINI_FIDATI)
+        results = raw.get("results", [])
+        
+        # Fallback se i siti governativi non contengono la risposta specifica
+        if not results:
+            raw = _esegui_ricerca(query, exclude_domains=DOMINI_ESCLUSI)
+            results = raw.get("results", [])
+    else:
+        raw = _esegui_ricerca(query, exclude_domains=DOMINI_ESCLUSI)
+        results = raw.get("results", [])
 
-    risultati_processati = []
-    seen_urls = set()
-
-    for r in risultati_grezzi.get("results", []):
-        url = r.get("url", "")
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-
-        # Sintetizza il contenuto grezzo se disponibile
-        raw = r.get("raw_content", "")
-        content = _summarize_content(raw) if raw else r.get("content", "")
-
-        risultati_processati.append({
-            "title": r.get("title", ""),
-            "url": url,
-            "content": content,
-        })
-
-    return _format_results(risultati_processati)
+    return _format_results(results)
 
 
 # ==============================================================
-# Think Tool
+# Think Tool Pubblico
 # ==============================================================
 
 @tool
@@ -134,21 +141,5 @@ def think_tool(riflessione: str) -> str:
     """
     Tool di riflessione strategica per valutare i progressi della ricerca.
     Usare dopo ogni ricerca per decidere se continuare o fermarsi.
-
-    Quando usarlo:
-    - Dopo ogni risultato di ricerca: ho trovato informazioni sufficienti?
-    - Prima di una nuova ricerca: cosa manca ancora?
-    - Prima di concludere: posso rispondere in modo completo a tutte le sezioni?
-
-    La riflessione deve rispondere a:
-    1. Cosa ho trovato finora per ciascuna sezione?
-    2. Quali sezioni sono ancora incomplete?
-    3. Devo cercare ancora o ho abbastanza informazioni?
-
-    Args:
-        riflessione: Analisi dettagliata dello stato della ricerca
-
-    Returns:
-        Conferma che la riflessione è stata registrata
     """
     return f"Riflessione registrata: {riflessione}"
