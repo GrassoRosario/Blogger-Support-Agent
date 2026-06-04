@@ -52,38 +52,98 @@ def test_neo4j():
 
 def test_indexer():
     print("\n=== TEST INDEXER ===")
-    from src.tools.indexer import indicizza_cartella
+    from src.tools.indexing.indexer import indicizza_cartella
     indicizza_cartella("documenti_RAG")
     print("✓ Indexer OK")
 
+# ==============================================================
+# 3. Retrieve Chunks
+# ==============================================================
+
+def test_retrieve_chunks():
+    print("\n=== TEST RETRIEVE CHUNKS ===")
+    from src.tools.rag.retriever import retrieve_chunks, get_monumenti_disponibili
+
+    mapping = get_monumenti_disponibili()
+
+    # Verifica che la Reggia di Caserta sia nel mapping e recupera il source
+    source = mapping.get("18th-Century Royal Palace at Caserta with the")
+    assert source is not None, \
+        "Reggia di Caserta non trovata nel mapping — verifica i dati indicizzati"
+
+    # Caso positivo: source presente
+    print("\n=== CASO POSITIVO ===")
+    risultato = retrieve_chunks(query="storia", source=source)
+    print(risultato + "\n")
+    assert "Nessun documento" not in risultato, \
+        "\nNessun chunk trovato — verifica che l'indexer sia stato eseguito"
+
+    # Caso negativo: source inesistente
+    print("\n=== CASO NEGATIVO:  ===")
+    risultato_vuoto = retrieve_chunks(query="storia", source="monumento_inesistente.pdf")
+    print(f"Risultato source inesistente: {risultato_vuoto}")
+    assert "Nessun documento" in risultato_vuoto, \
+        "Atteso messaggio di fallback per source inesistente"
+
+    print("✓ Retrieve Chunks OK")
+
 
 # ==============================================================
-# 3. Retriever
+# 4. Dispatcher
 # ==============================================================
 
-def test_retriever():
-    print("\n=== TEST RETRIEVER ===")
-    from src.tools.retriever_tool import retriever_tool
+def test_dispatcher():
+    print("\n=== TEST DISPATCHER ===")
+    from src.tools.rag.dispatcher import dispatch
+    from src.tools.rag.retriever import get_monumenti_disponibili
 
-    risultato = retriever_tool.invoke({"query": "Reggia di Caserta storia"})
-    print(risultato)
-    assert "Nessun documento" not in risultato, "Nessun chunk trovato — verifica che l'indexer sia stato eseguito"
-    print("✓ Retriever OK")
+    mapping = get_monumenti_disponibili()
+    print(f"Monumenti disponibili: {list(mapping.keys())}")
+
+    # Caso positivo: monumento presente
+    risultato = dispatch("storia della Reggia di Caserta", mapping)
+    print(f"Risultato dispatch: {risultato}")
+    assert risultato["trovato"] is True, "Il dispatcher non ha trovato il monumento"
+    assert risultato["source"] is not None, "source è None"
+    assert risultato["query_pulita"] is not None, "query_pulita è None"
+    assert "caserta" not in risultato["query_pulita"].lower(), \
+        "Il nome del monumento non è stato rimosso dalla query"
+    print(f"  source: {risultato['source']}")
+    print(f"  query_pulita: {risultato['query_pulita']}")
+
+    # Caso negativo: monumento non presente
+    print("\n=== TEST DISPATCHER: CASO NEGATIVO ===")
+    risultato_assente = dispatch("storia del Taj Mahal", mapping)
+    print(f"Risultato dispatch (assente): {risultato_assente}")
+    assert risultato_assente["trovato"] is False, \
+        "Il dispatcher ha trovato un monumento che non esiste"
+
+    print("✓ Dispatcher OK")
 
 
 # ==============================================================
-# 4. RAG
+# 5. RAG
 # ==============================================================
 
 def test_rag():
     print("\n=== TEST RAG ===")
-    from src.tools.rag_tool import rag_tool
+    from src.tools.rag.rag_tool import rag_tool
 
-    risultato = rag_tool.invoke({"domanda": "Qual è il valore universale della Reggia di Caserta?"})
-    print(risultato[:500])
+    # Caso positivo: monumento presente
+    risultato = rag_tool.invoke({"domanda": "storia della Reggia di Caserta"})
+    print(risultato + "\n")
     assert len(risultato) > 50, "Risposta troppo corta"
-    print("✓ RAG OK")
+    assert "Nessun documento trovato" not in risultato, \
+        "Il rag_tool non ha trovato il documento"
 
+    # Caso negativo: monumento non presente
+    print("\n=== TEST RAG: CASO NEGATIVO ===")
+    risultato_assente = rag_tool.invoke({"domanda": "storia del Taj Mahal"})
+    print(f"Risultato assente: {risultato_assente}")
+    assert risultato_assente == "Nessun documento trovato per il monumento richiesto.", \
+        "Il rag_tool non ha gestito correttamente il caso di monumento assente"
+
+    print("✓ RAG OK")
 
 # ==============================================================
 # 5. Search
@@ -134,7 +194,7 @@ def test_researcher():
     }
 
     risultato = researcher_node(state)
-    ricerca = risultato.get("ricerca")
+    ricerca = risultato.get("ricerca") 
     print(f"Sezioni trovate: {list(ricerca.keys())}")
 
     sezioni_attese = ["descrizione", "storia", "cosa_vedere", "informazioni_pratiche", "claim", "fonti"]
@@ -205,15 +265,16 @@ def test_kg_updater():
 # ==============================================================
 
 TESTS = {
-    "neo4j":      test_neo4j,
-    "indexer":    test_indexer,
-    "retriever":  test_retriever,
-    "rag":        test_rag,
-    "search":     test_search,
-    "planner":    test_planner,
-    "researcher": test_researcher,
-    "drafter":    test_drafter,
-    "kg_updater": test_kg_updater,
+    "neo4j":            test_neo4j,
+    "indexer":          test_indexer,
+    "dispatcher":       test_dispatcher,       
+    "retrieve_chunks":  test_retrieve_chunks,  
+    "rag":              test_rag,              
+    "search":           test_search,
+    "planner":          test_planner,
+    "researcher":       test_researcher,
+    "drafter":          test_drafter,
+    "kg_updater":       test_kg_updater,
 }
 
 if __name__ == "__main__":

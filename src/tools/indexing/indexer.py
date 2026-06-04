@@ -15,7 +15,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_neo4j import Neo4jVector
 
 from config import driver, NEO4J_VECTOR_KWARGS, carica_embeddings
-from indexer_unesco import indicizza_pdf_unesco
+from indexing.indexer_unesco import indicizza_pdf_unesco
 
 
 # ============================================================
