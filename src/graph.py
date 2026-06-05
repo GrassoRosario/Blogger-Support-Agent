@@ -12,10 +12,10 @@ from typing import TypedDict, Optional
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from planner import planner_node
-from researcher import researcher_node
-from drafter import drafter_node
-from kg_updater import kg_updater_node
+from src.nodes.planner import planner_node
+from src.nodes.researcher import researcher_node
+from src.nodes.drafter import drafter_node
+from src.nodes.kg_updater import kg_updater_node
 
 
 load_dotenv()

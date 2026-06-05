@@ -167,14 +167,21 @@ def test_planner():
     print("\n=== TEST PLANNER ===")
     from src.nodes.planner import planner_node
 
-    state = {"n": 5, "k": 3, "piano_corrente": None, "ricerca": None,
-             "bozza": None, "hitl_action": None, "hitl_feedback": None, "post_id": None}
+    state = {
+        "n": 5, "k": 3,
+        "piano_corrente": None, "ricerca": None,
+        "bozza": None, "hitl_action": None, "hitl_feedback": None, "post_id": None
+    }
 
     risultato = planner_node(state)
     piano = risultato.get("piano_corrente")
     print(f"Piano corrente: {piano}")
     assert piano is not None, "piano_corrente è None"
-    assert "regione" in piano and "topic" in piano, "Piano malformato"
+    assert "regione" in piano and "topic" in piano, "Piano malformato — mancano 'regione' o 'topic'"
+    assert isinstance(piano["regione"], str) and len(piano["regione"]) > 0, "Regione vuota"
+    assert isinstance(piano["topic"], str) and len(piano["topic"]) > 0, "Topic vuoto"
+    print(f"  Regione: {piano['regione']}")
+    print(f"  Topic:   {piano['topic']}")
     print("✓ Planner OK")
 
 

@@ -34,6 +34,7 @@ def inserisci_post(titolo: str, testo: str, regione: str,
             claim=["Patrimonio UNESCO dal 1993", "Abitati da 9.000 anni"]
         )
     """
+    
     post_id = str(uuid.uuid4())
     data = datetime.now().isoformat()
 
