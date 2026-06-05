@@ -11,8 +11,7 @@ driver = GraphDatabase.driver(URI, auth=None)
 # WRITE — Inserimento post approvato
 # ==============================================================
 
-def inserisci_post(titolo: str, testo: str, regione: str,
-                   topic: list[str], fonti: list[dict], claim: list[str]):
+def inserisci_post(titolo: str, testo: str, regione: str, topic: list[str], fonti: list[dict]):
     """
     Inserisce un post approvato nel KG con tutte le sue relazioni.
 
@@ -21,8 +20,7 @@ def inserisci_post(titolo: str, testo: str, regione: str,
         testo:   Testo completo del post
         regione: Nome della regione (es. "Sicilia")
         topic:   Lista di nomi topic (es. ["Valle dei Templi", "Agrigento"])
-        fonti:   Lista di dict con chiavi: url, titolo, quality_score
-        claim:   Lista di stringhe (affermazioni estratte dal post)
+        fonti:   Lista di dict con chiavi: url, quality_score, trust_status
 
     Example:
         inserisci_post(
@@ -30,25 +28,23 @@ def inserisci_post(titolo: str, testo: str, regione: str,
             testo="I Sassi di Matera sono...",
             regione="Basilicata",
             topic=["Sassi di Matera"],
-            fonti=[{"url": "https://...", "titolo": "UNESCO", "quality_score": 0.9}],
-            claim=["Patrimonio UNESCO dal 1993", "Abitati da 9.000 anni"]
+            fonti=[{"url": "https://...", "quality_score": 5, "trust_status": "use"}]
         )
     """
-    
     post_id = str(uuid.uuid4())
     data = datetime.now().isoformat()
 
     with driver.session() as session:
         session.execute_write(
             _inserisci_post_tx,
-            post_id, titolo, testo, data, regione, topic, fonti, claim
+            post_id, titolo, testo, data, regione, topic, fonti
         )
     print(f"Post inserito: {post_id}")
     return post_id
 
 
 def _inserisci_post_tx(tx, post_id, titolo, testo, data,
-                       regione, topic, fonti, claim):
+                       regione, topic, fonti):
     # Crea il nodo Post e collega alla Regione
     tx.run("""
         CREATE (p:Post {id: $id, titolo: $titolo, testo: $testo, data_creazione: $data})
@@ -75,21 +71,14 @@ def _inserisci_post_tx(tx, post_id, titolo, testo, data,
     for f in fonti:
         tx.run("""
             MERGE (f:Fonte {url: $url})
-            ON CREATE SET f.id = $id, f.titolo = $titolo, f.quality_score = $score
+            ON CREATE SET f.id = $id, f.quality_score = $score,
+                          f.trust_status = $trust_status
             WITH f
             MATCH (p:Post {id: $post_id})
             MERGE (p)-[:CITA]->(f)
-        """, url=f["url"], id=str(uuid.uuid4()), titolo=f["titolo"],
-             score=f["quality_score"], post_id=post_id)
-
-    # Crea i Claim e li collega al Post
-    for testo_claim in claim:
-        tx.run("""
-            CREATE (c:Claim {id: $id, testo: $testo})
-            WITH c
-            MATCH (p:Post {id: $post_id})
-            MERGE (p)-[:CONTIENE]->(c)
-        """, id=str(uuid.uuid4()), testo=testo_claim, post_id=post_id)
+        """, url=f["url"], id=str(uuid.uuid4()),
+             score=f["quality_score"], trust_status=f["trust_status"],
+             post_id=post_id)
 
 
 # ==============================================================
@@ -149,7 +138,6 @@ def prossimo_post_pianificato() -> dict | None:
 
 
 def _prossimo_post_pianificato_tx(tx) -> dict | None:
-    # Legge il piano più vecchio
     result = tx.run("""
         MATCH (pp:PostPianificato)-[:RIGUARDA]->(r:Regione)
         MATCH (pp)-[:PROPONE]->(t:Topic)
@@ -162,7 +150,6 @@ def _prossimo_post_pianificato_tx(tx) -> dict | None:
     if not record:
         return None
 
-    # Elimina il piano dal KG
     tx.run("""
         MATCH (pp:PostPianificato {id: $id})
         DETACH DELETE pp
@@ -233,45 +220,54 @@ def topic_per_regione(nome_regione: str) -> list[str]:
 
 
 # ==============================================================
-# READ — Query del Drafter
+# READ — Query del Researcher
+# ==============================================================
+def fonti_note() -> dict:
+    """
+    Restituisce tutte le fonti del KG divise per trust_status.
+
+    Returns:
+        Dict con due chiavi:
+          - "use":   dict {url: quality_score} per le fonti affidabili, ordinate per score desc
+          - "avoid": lista di url per le fonti da non usare
+    """
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (f:Fonte)
+            RETURN f.url AS url, f.quality_score AS quality_score,
+                   f.trust_status AS trust_status
+            ORDER BY f.quality_score DESC
+        """)
+
+        use = {}
+        avoid = []
+        for record in result:
+            if record["trust_status"] == "use":
+                use[record["url"]] = record["quality_score"]
+            else:
+                avoid.append(record["url"])
+
+    return {"use": use, "avoid": avoid}
+
+
+# ==============================================================
+# READ — Ottieni score per una lista di fonti (per Drafter/HITL)
 # ==============================================================
 
-def claim_esistenti_per_topic(nome_topic: str) -> list[str]:
+def get_quality_score_fonti(urls: list[str]) -> dict[str, int]:
     """
-    Restituisce i claim già presenti nel KG per un topic.
-    Usata dal Drafter per garantire consistenza con i post precedenti.
-
-    Args:
-        nome_topic: Nome del topic (es. "Colosseo")
+    Dato un elenco di URL, restituisce {url: quality_score} per ciascuno.
+    Le fonti non presenti nel KG avranno quality_score 1 come valore di default.
     """
     with driver.session() as session:
         result = session.run("""
-            MATCH (p:Post)-[:TRATTA]->(t:Topic {nome: $nome})
-            MATCH (p)-[:CONTIENE]->(c:Claim)
-            RETURN c.testo AS claim
-        """, nome=nome_topic)
-        return [record["claim"] for record in result]
+            MATCH (f:Fonte)
+            WHERE f.url IN $urls
+            RETURN f.url AS url, f.quality_score AS quality_score
+        """, urls=urls)
+        known = {record["url"]: record["quality_score"] for record in result}
 
-
-def fonti_per_regione(nome_regione: str) -> list[dict]:
-    """
-    Restituisce le fonti già usate per post nella regione,
-    ordinate per quality_score decrescente.
-    Usata dal Drafter per riutilizzare fonti di qualità già note.
-
-    Args:
-        nome_regione: Nome della regione (es. "Campania")
-    """
-    with driver.session() as session:
-        result = session.run("""
-            MATCH (p:Post)-[:AMBIENTATO_IN]->(r:Regione {nome: $nome})
-            MATCH (p)-[:CITA]->(f:Fonte)
-            RETURN DISTINCT f.url AS url, f.titolo AS titolo,
-                            f.quality_score AS quality_score
-            ORDER BY f.quality_score DESC
-        """, nome=nome_regione)
-        return [dict(record) for record in result]
-
+    return {url: known.get(url, 1) for url in urls}
 
 # ==============================================================
 # Chiusura connessione

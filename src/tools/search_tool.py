@@ -14,22 +14,6 @@ from tavily import TavilyClient
 
 tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
 
-# Whitelist di domini istituzionali e culturali per garantire fonti autorevoli
-DOMINI_FIDATI = [
-    "whc.unesco.org",
-    "unesco.cultura.gov.it",
-    "cultura.gov.it",
-    "italia.it",
-    "beniculturali.it",
-    "treccani.it",
-    "sitiunesco.it",
-    "regione.sicilia.it"
-]
-
-DOMINI_ESCLUSI = [
-    "youtube.com", "getyourguide.com", "tripadvisor.com", 
-    "casevacanzasicilia.it", "booking.com", "expedia.it", "komoot.com"
-]
 
 # ==============================================================
 # Funzioni interne di Formattazione ad Alta Leggibilità
@@ -49,30 +33,35 @@ def _clean_content(text: str) -> str:
         cleaned.append(line_str)
     return " ".join(cleaned)
 
-def _format_results(results: list[dict]) -> str:
+def _format_results(results: list[dict], fonti: dict = None) -> str:
     """Formatta i risultati in un layout chiaro e cristallino."""
     if not results:
         return "Nessun risultato autorevole trovato. Prova a riformulare la query con termini più specifici."
 
+    if fonti:
+        score_map = fonti.get("use", {})
+        results = sorted(
+            results,
+            key=lambda r: score_map.get(r["url"], 0),
+            reverse=True
+        )
+
     output = "=== RISULTATI DELLA RICERCA WEB (FONTI VERIFICATE) ===\n\n"
     for i, r in enumerate(results, 1):
         full_text = _clean_content(r.get("content", ""))
-        
-        # Se il testo è troppo corto, usa una stringa di fallback
+
         if len(full_text) < 50:
             full_text = r.get("content", "Dettagli non disponibili nel testo estratto.")
 
-        # Costruiamo il testo lineare del riassunto (le prime due frasi lunghe)
         sentences = [s.strip() for s in full_text.split(".") if len(s.strip()) > 20]
         riassunto_testo = ". ".join(sentences[:3]) + "." if sentences else full_text[:300]
-        
+
         output += f"--- FONTE {i}: {r['title']} ---\n"
         output += f"URL PER CITAZIONE: {r['url']}\n\n"
-        
+
         output += f"RIASSUNTO:\n{riassunto_testo}\n\n"
-        
+
         output += "PASSAGGI CHIAVE:\n"
-        # Creiamo punti elenco sintetici basati sul contenuto reale per massima chiarezza
         if len(sentences) >= 2:
             output += f"* **Contesto Principale**: {sentences[0]}.\n"
             if len(sentences) > 1:
@@ -81,7 +70,7 @@ def _format_results(results: list[dict]) -> str:
                 output += f"* **Informazioni di Rilievo**: {sentences[2]}.\n"
         else:
             output += f"* **Punto Chiave**: {full_text[:150]}...\n"
-            
+
         output += "\n" + "-" * 60 + "\n\n"
     return output
 
@@ -103,37 +92,48 @@ def _esegui_ricerca(query: str, include_domains=None, exclude_domains=None) -> d
     return tavily_client.search(**params)
 
 # ==============================================================
-# Search Tool Pubblico
+# Search Tool 
 # ==============================================================
-
 @tool
-def search_tool(query: str, solo_fidati: bool = True) -> str:
+def search_tool(query: str, fonti: dict = None) -> str:
     """
     Cerca informazioni su internet su luoghi turistici, monumenti,
     borghi, siti naturali e attrazioni italiane.
     Garantisce un output chiaro, leggibile e privo di elementi di disturbo web.
 
-    Args:
-        query: Query specifica in italiano (es. "Cattedrale di Palermo storia architettura")
-        solo_fidati: Se True, limita la ricerca ai domini istituzionali e culturali (default: True)
-    """
-    if solo_fidati:
-        raw = _esegui_ricerca(query, include_domains=DOMINI_FIDATI)
-        results = raw.get("results", [])
-        
-        # Fallback se i siti governativi non contengono la risposta specifica
-        if not results:
-            raw = _esegui_ricerca(query, exclude_domains=DOMINI_ESCLUSI)
-            results = raw.get("results", [])
-    else:
-        raw = _esegui_ricerca(query, exclude_domains=DOMINI_ESCLUSI)
-        results = raw.get("results", [])
+    IMPORTANTE: la query deve essere SPECIFICA e includere:
+    - Nome esatto del luogo (es. "Valle dei Templi", "Reggia di Caserta")
+    - Regione o città (es. "Agrigento", "Campania")
+    - Aspetto cercato (es. "storia", "orari visita", "patrimonio UNESCO")
 
-    return _format_results(results)
+    Esempi di query CORRETTE:
+      "Valle dei Templi Agrigento storia patrimonio UNESCO"
+      "Reggia di Caserta orari biglietti cosa vedere"
+
+    Esempi di query SBAGLIATE (troppo vaghe):
+      "cosa vedere in Sicilia"
+      "monumenti storici Italia"
+
+    Args:
+        query:  Query specifica in italiano (es. "Cattedrale di Palermo storia architettura")
+        fonti:  Dict con "use" (url: quality_score) e "avoid" (lista url) restituito da kg_fonti_tool.
+                Se assente, la ricerca avviene senza filtri sui domini.
+                Se presente, i risultati sono restituiti in ordine decrescente di quality_score:
+                le fonti con score più alto appaiono per prime.
+    """
+    if fonti:
+        include = list(fonti.get("use", {}).keys())
+        exclude = fonti.get("avoid", [])
+        raw = _esegui_ricerca(query, include_domains=include, exclude_domains=exclude)
+    else:
+        raw = _esegui_ricerca(query)
+
+    results = raw.get("results", [])
+    return _format_results(results, fonti=fonti)
 
 
 # ==============================================================
-# Think Tool Pubblico
+# Think Tool 
 # ==============================================================
 
 @tool

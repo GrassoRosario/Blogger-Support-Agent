@@ -8,7 +8,7 @@ Dipendenze:
     pip install langgraph langchain-google-genai
 """
 
-from typing import TypedDict, Optional
+from typing import Any, List, TypedDict, Optional
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -34,13 +34,15 @@ class BlogState(TypedDict):
 
     # Output del Researcher
     ricerca: Optional[dict]         # sezioni strutturate + claim + fonti
+    reasoning_trace: Optional[List[Any]] # <-- Traccia dei ragionamenti (Thought/Action/Observation) dell'agente ReAct
 
     # Output del Drafter
-    bozza: Optional[str]            # testo completo del post
+    bozza: Optional[str]                            # testo completo del post
 
     # HITL
-    hitl_action: Optional[str]      # "approva" | "modifica" | "rifiuta"
-    hitl_feedback: Optional[str]    # feedback testuale in caso di modifica
+    hitl_action: Optional[str]                      # "approva" | "modifica" | "rifiuta"
+    hitl_feedback: Optional[str]                    # feedback testuale in caso di modifica
+    valutazione_fonti: Optional[dict[str, int]]
 
     # Output del KG Updater
     post_id: Optional[str]          # ID del post salvato nel KG

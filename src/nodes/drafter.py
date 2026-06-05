@@ -16,6 +16,8 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
+from kg_operations import get_quality_score_fonti
+
 
 # ==============================================================
 # Configurazione
@@ -113,9 +115,14 @@ def drafter_node(state: dict) -> dict:
         "feedback_section": feedback_section,
     })
 
+    # Preparazione Valutazione fonti nel HITL
+    fonti_trovate = ricerca.get("fonti", [])
+    valutazione_iniziale = get_quality_score_fonti(fonti_trovate)
+
     return {
         **state,
         "bozza": risposta.content,
+        "valutazione_fonti": valutazione_iniziale,
         "hitl_action": None,
         "hitl_feedback": None,
     }

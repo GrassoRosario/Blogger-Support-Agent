@@ -12,7 +12,7 @@ langchain-community
 langchain-text-splitters
 langchain-neo4j
 langchain-huggingface
-config
+
 
 # LLM - Gemini
 langchain-google-genai

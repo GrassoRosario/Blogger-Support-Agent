@@ -3,7 +3,7 @@ Nodo KG Updater del grafo LangGraph per il blog turistico italiano.
 
 Responsabilità:
 - Riceve la bozza approvata dal HITL
-- Legge topic, claim e fonti direttamente dall'output del Researcher
+- Legge topic e fonti direttamente dall'output del Researcher
 - Salva il post approvato nel Knowledge Graph
 
 Nessuna chiamata LLM: tutte le informazioni sono già nello state.
@@ -24,9 +24,10 @@ def kg_updater_node(state: dict) -> dict:
     Nodo KG Updater del grafo LangGraph.
 
     Legge dallo state:
-        piano_corrente (dict): {"regione": "...", "topic": "..."}
-        bozza (str):           testo del post approvato dal HITL
-        ricerca (dict):        output strutturato del Researcher
+        piano_corrente (dict):      {"regione": "...", "topic": "..."}
+        bozza (str):                testo del post approvato dal HITL
+        ricerca (dict):             output strutturato del Researcher
+        valutazione_fonti (dict):   coppie {url: voto_utente} modificate via HITL
 
     Scrive sullo state:
         post_id (str): ID del post inserito nel KG
@@ -34,6 +35,7 @@ def kg_updater_node(state: dict) -> dict:
     piano = state.get("piano_corrente")
     bozza = state.get("bozza")
     ricerca = state.get("ricerca", {})
+    valutazione_fonti = state.get("valutazione_fonti", {})
 
     if not piano:
         raise ValueError("piano_corrente non trovato nello state.")
@@ -50,16 +52,20 @@ def kg_updater_node(state: dict) -> dict:
     # Topic: il topic del piano come lista
     topic = [piano["topic"]]
 
-    # Claim e fonti direttamente dal Researcher
-    claim = ricerca.get("claim", [])
-    fonti = [
-        {
+    # Fonti: costruisce la lista delle fonti con i relativi punteggi e status di affidabilità
+    fonti = []
+    for url in ricerca.get("fonti", []):
+
+        score = valutazione_fonti.get(url)
+        
+        # Determina lo status: se il voto è 0 (rifiutato) allora "avoid", altrimenti "use"
+        trust_status = "avoid" if score == 0 else "use"
+        
+        fonti.append({
             "url": url,
-            "titolo": url,
-            "quality_score": 0.5
-        }
-        for url in ricerca.get("fonti", [])
-    ]
+            "quality_score": score,
+            "trust_status": trust_status
+        })
 
     # Inserisce il post nel KG
     post_id = inserisci_post(
@@ -68,7 +74,6 @@ def kg_updater_node(state: dict) -> dict:
         regione=piano["regione"],
         topic=topic,
         fonti=fonti,
-        claim=claim,
     )
 
     print(f"Post salvato nel KG con ID: {post_id}")

@@ -8,11 +8,9 @@ Responsabilità:
 - Passa l'output strutturato al Drafter
 
 Tool disponibili:
-- retriever_tool: chunk grezzi dai documenti locali
 - rag_tool: risposta grounded dai documenti locali
-- search_tool: ricerca su internet (placeholder)
-- kg_claim_tool: claim già presenti nel KG per un topic
-- kg_fonti_tool: fonti già usate per una regione
+- search_tool: ricerca su internet per informazioni non trovate localmente
+- kg_fonti_tool: fonti già note dal KG per guidare la ricerca
 
 Dipendenze:
     pip install langchain langchain-google-genai langgraph
@@ -21,9 +19,9 @@ Dipendenze:
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
-from kg_operations import claim_esistenti_per_topic, fonti_per_regione
-from retriever_tool import retriever_tool
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain.callbacks import StdOutCallbackHandler
+from kg_operations import fonti_note
 from rag_tool import rag_tool
 from search_tool import search_tool, think_tool
 
@@ -44,43 +42,14 @@ llm = ChatGoogleGenerativeAI(
 # ==============================================================
 
 @tool
-def kg_claim_tool(nome_topic: str) -> str:
+def kg_fonti_tool() -> dict:
     """
-    Restituisce i claim (affermazioni fattuali) già presenti nel Knowledge Graph
-    per un topic specifico. Usare per evitare di ripetere informazioni già
-    pubblicate in post precedenti.
-
-    Args:
-        nome_topic: Nome del topic (es. "Reggia di Caserta")
+    Restituisce tutte le fonti del KG divise per affidabilità.
 
     Returns:
-        Lista di claim già pubblicati sul topic
+        Dict con "use" (url: quality_score) e "avoid" (lista url)
     """
-    claim = claim_esistenti_per_topic(nome_topic)
-    if not claim:
-        return f"Nessun claim trovato nel KG per il topic: {nome_topic}"
-    return "\n".join(f"- {c}" for c in claim)
-
-
-@tool
-def kg_fonti_tool(nome_regione: str) -> str:
-    """
-    Restituisce le fonti già usate in post precedenti per una regione,
-    ordinate per qualità. Usare per riutilizzare fonti affidabili già note.
-
-    Args:
-        nome_regione: Nome della regione (es. "Campania")
-
-    Returns:
-        Lista di fonti con URL e quality score
-    """
-    fonti = fonti_per_regione(nome_regione)
-    if not fonti:
-        return f"Nessuna fonte trovata nel KG per la regione: {nome_regione}"
-    return "\n".join(
-        f"- {f['titolo']} ({f['url']}) — score: {f['quality_score']}"
-        for f in fonti
-    )
+    return fonti_note()
 
 
 # ==============================================================
@@ -91,19 +60,40 @@ SYSTEM_PROMPT = """Sei un ricercatore esperto di turismo italiano.
 Il tuo compito è raccogliere informazioni su un luogo turistico italiano
 per permettere la scrittura di un post di blog.
 
-Devi popolare TUTTE le seguenti sezioni:
+## FORMATO OBBLIGATORIO
+Devi ragionare seguendo SEMPRE questo ciclo, senza eccezioni:
+
+Thought: [spiega cosa sai finora e perché usi questo tool]
+Action: [nome esatto del tool: rag_tool | search_tool | think_tool | kg_fonti_tool]
+Action Input: [input del tool]
+Observation: [risultato del tool — compilato automaticamente]
+
+Ripeti il ciclo fino a quando tutte le sezioni sono popolate, poi:
+
+Thought: Ho raccolto abbastanza informazioni per tutte le sezioni.
+Final Answer: {"descrizione": "...", "storia": "...", ...}
+
+## REGOLE
+- Non saltare mai il Thought prima di ogni Action
+- Nel Thought spiega PERCHÉ stai scegliendo quel tool specifico
+- Non usare un tool senza aver scritto un Thought che lo giustifica
+- Final Answer SOLO quando tutte le sezioni sono popolate
+
+
+## SEZIONI DA POPOLARE
 - descrizione: cos'è il luogo, dove si trova, aspetto generale
 - storia: origini, eventi storici rilevanti, curiosità storiche
 - cosa_vedere: elementi specifici da non perdere, dettagli notevoli
 - informazioni_pratiche: come arrivare, orari, biglietti, consigli visita
-- claim: lista di affermazioni fattuali verificabili (date, misure, fatti storici)
 - fonti: lista delle fonti usate con URL
 
-Strategia:
-1. Controlla prima i claim già pubblicati nel KG (kg_claim_tool) per evitare ripetizioni
-2. Cerca nei documenti locali con rag_tool o retriever_tool
-3. Usa search_tool per informazioni non trovate localmente (max 5 chiamate)
-4. Dopo ogni ricerca usa think_tool per valutare cosa hai trovato e cosa manca
+## STRATEGIA
+1. Cerca nei documenti locali con rag_tool
+2. Chiama kg_fonti_tool per ottenere le fonti affidabili note, poi usa search_tool
+   passando il risultato di kg_fonti_tool per limitare la ricerca ai domini fidati (max 3 chiamate)
+3. Dopo ogni ricerca usa think_tool per valutare cosa hai trovato e cosa manca
+4. Se le sezioni non sono ancora sufficientemente popolate, usa search_tool senza
+   passare fonti per allargare la ricerca (max 2 chiamate aggiuntive)
 5. Fermati quando tutte le sezioni sono sufficientemente popolate
 
 Quando hai popolato tutte le sezioni, restituisci un JSON con questa struttura:
@@ -112,7 +102,6 @@ Quando hai popolato tutte le sezioni, restituisci un JSON con questa struttura:
     "storia": "...",
     "cosa_vedere": "...",
     "informazioni_pratiche": "...",
-    "claim": ["affermazione 1", "affermazione 2", ...],
     "fonti": ["url1", "url2", ...]
 }
 
@@ -142,10 +131,16 @@ def researcher_node(state: dict) -> dict:
     topic = piano["topic"]
 
     # Crea l'agente ReAct con i tool disponibili
-    agent = create_react_agent(
-        model=llm,
-        tools=[rag_tool, retriever_tool, search_tool, think_tool, kg_claim_tool, kg_fonti_tool],
-        prompt=SYSTEM_PROMPT,
+    agent = create_react_agent(llm, tools=[rag_tool, search_tool,
+                                        think_tool, kg_fonti_tool], 
+                           prompt=SYSTEM_PROMPT)
+
+    executor = AgentExecutor(
+        agent=agent,
+        tools=[rag_tool, search_tool, think_tool, kg_fonti_tool],
+        verbose=True,                    # stampa Thought/Action/Observation
+        return_intermediate_steps=True,  # salva i passi nello state
+        max_iterations=10,
     )
 
     # Lancia l'agente con il task specifico
@@ -154,21 +149,17 @@ def researcher_node(state: dict) -> dict:
         f"Popola tutte le sezioni richieste e restituisci il JSON finale."
     )
 
-    risultato = agent.invoke({
-        "messages": [("user", messaggio_utente)]
-    })
-
-    # Estrae il contenuto dell'ultimo messaggio (il JSON finale)
-    ultimo_messaggio = risultato["messages"][-1].content
+    risultato = executor.invoke({"input": messaggio_utente})
+    ultimo_messaggio = risultato["output"]
 
     # Parsing del JSON
     import json
     import re
-    # Rimuove eventuali backtick markdown se presenti
     testo = re.sub(r"```json|```", "", ultimo_messaggio).strip()
     ricerca = json.loads(testo)
 
     return {
         **state,
         "ricerca": ricerca,
-    }
+        "reasoning_trace": risultato["intermediate_steps"],  
+}
