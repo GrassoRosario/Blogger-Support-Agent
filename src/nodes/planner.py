@@ -89,7 +89,7 @@ def planner_node(state: dict) -> dict:
     k = state.get("k", 3)
 
     # Salva esempio "rifiutato" nel classifier se arriviamo da un rifiuto HITL
-    if state.get("hitl_action") == "rifiuta" and state.get("bozza"):
+    if state.get("hitl_action") == "rifiuta" and state.get("bozza") and state.get("piano_corrente"):
         print("[Planner] Post rifiutato — salvo esempio nel classifier...")
         risultato = post_quality_classifier_tool.invoke({
             "testo":   state["bozza"],
