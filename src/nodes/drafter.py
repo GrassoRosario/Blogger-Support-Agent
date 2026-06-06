@@ -16,7 +16,8 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
-from kg_operations import get_quality_score_fonti
+from src.database.kg_operations import get_quality_score_fonti
+from src.tools.related_posts_tool import related_posts_tool
 
 
 # ==============================================================
@@ -114,6 +115,24 @@ def drafter_node(state: dict) -> dict:
         "fonti": "\n".join(ricerca.get("fonti", [])),
         "feedback_section": feedback_section,
     })
+    # Post corelati 
+     # Estrai testo dalla risposta
+    if isinstance(risposta.content, str):
+        bozza = risposta.content
+    elif isinstance(risposta.content, list):
+        bozza = "\n".join(
+            b.get("text", "") if isinstance(b, dict) else str(b)
+            for b in risposta.content
+        )
+    else:
+        bozza = str(risposta.content)
+
+    # Aggiunge sezione post correlati in fondo
+    sezione_correlati = related_posts_tool.invoke({
+        "regione":        piano["regione"],
+        "topic_corrente": piano["topic"],
+    })
+    bozza_finale = bozza + sezione_correlati
 
     # Preparazione Valutazione fonti nel HITL
     fonti_trovate = ricerca.get("fonti", [])

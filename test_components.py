@@ -266,6 +266,22 @@ def test_kg_updater():
     assert post_id is not None, "post_id è None"
     print("✓ KG Updater OK")
 
+# ==============================================================
+# 10. Related Posts Tool
+# ==============================================================
+
+def test_related_posts():
+    print("\n=== TEST RELATED POSTS ===")
+    from src.tools.related_posts_tool import related_posts_tool
+
+    # Caso con post correlati (funziona solo dopo aver pubblicato almeno 1 post)
+    risultato = related_posts_tool.invoke({
+        "regione":        "Sicilia",
+        "topic_corrente": "Valle dei Templi",
+    })
+    print(risultato if risultato else "Nessun correlato (DB vuoto — normale al primo run)")
+    print("✓ Related Posts OK")
+
 
 # ==============================================================
 # Entry point
@@ -282,6 +298,7 @@ TESTS = {
     "researcher":       test_researcher,
     "drafter":          test_drafter,
     "kg_updater":       test_kg_updater,
+    "related_posts":    test_related_posts,
 }
 
 if __name__ == "__main__":
@@ -316,3 +333,14 @@ if __name__ == "__main__":
         print(f"Test sconosciuto: {comando}")
         print(f"Test disponibili: {', '.join(TESTS.keys())}")
         sys.exit(1)
+def test_related_posts():
+    print("\n=== TEST RELATED POSTS ===")
+    from src.tools.related_posts_tool import related_posts_tool
+
+    # Caso con post correlati (funziona solo dopo aver pubblicato almeno 1 post)
+    risultato = related_posts_tool.invoke({
+        "regione":        "Sicilia",
+        "topic_corrente": "Valle dei Templi",
+    })
+    print(risultato if risultato else "Nessun correlato (DB vuoto — normale al primo run)")
+    print("✓ Related Posts OK")
