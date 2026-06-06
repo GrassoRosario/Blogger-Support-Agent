@@ -138,6 +138,14 @@ def prossimo_post_pianificato() -> dict | None:
 
 
 def _prossimo_post_pianificato_tx(tx) -> dict | None:
+    # 1. Intercetta preventivamente se ci sono nodi PostPianificato nel DB.
+    # Questo evita l'esplorazione di relazioni non ancora registrate, azzerando i warning.
+    check_res = tx.run("MATCH (pp:PostPianificato) RETURN count(pp) AS totale")
+    if check_res.single()["totale"] == 0:
+        print("[KG] Nessun piano memorizzato nel Knowledge Graph.")
+        return None
+
+    # 2. Se i nodi esistono, la query viene eseguita in totale sicurezza dal catalogo
     result = tx.run("""
         MATCH (pp:PostPianificato)-[:RIGUARDA]->(r:Regione)
         MATCH (pp)-[:PROPONE]->(t:Topic)
@@ -150,13 +158,13 @@ def _prossimo_post_pianificato_tx(tx) -> dict | None:
     if not record:
         return None
 
+    # 3. Rimozione del piano estratto dal flusso editoriale
     tx.run("""
         MATCH (pp:PostPianificato {id: $id})
         DETACH DELETE pp
     """, id=record["id"])
 
     return {"regione": record["regione"], "topic": record["topic"]}
-
 
 # ==============================================================
 # READ — Query del Planner
