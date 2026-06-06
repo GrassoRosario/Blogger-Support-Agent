@@ -6,6 +6,7 @@ Responsabilità:
 - Se sì: prende il più vecchio e lo usa come piano_corrente
 - Se no: genera K nuovi piani tramite regioni_disponibili() e Search,
          salva i K-1 piani rimanenti nel KG, usa il primo come piano_corrente
+- Salva esempio "rifiutato" nel classifier se arriviamo da un rifiuto HITL
 """
 
 import os
@@ -19,6 +20,7 @@ from src.database.kg_operations import (
     inserisci_post_pianificati,
 )
 from src.tools.search_tool import search_tool
+from src.tools.post_quality_classifier import post_quality_classifier_tool
 
 
 # ==============================================================
@@ -85,6 +87,17 @@ def planner_node(state: dict) -> dict:
     """
     n = state.get("n", 5)
     k = state.get("k", 3)
+
+    # Salva esempio "rifiutato" nel classifier se arriviamo da un rifiuto HITL
+    if state.get("hitl_action") == "rifiuta" and state.get("bozza"):
+        print("[Planner] Post rifiutato — salvo esempio nel classifier...")
+        risultato = post_quality_classifier_tool.invoke({
+            "testo":   state["bozza"],
+            "label":   "rifiutato",
+            "regione": state["piano_corrente"]["regione"],
+            "topic":   state["piano_corrente"]["topic"],
+        })
+        print(f"[Planner] Classifier: {risultato}")
 
     # 1. Controlla se esistono PostPianificati nel KG
     piano = prossimo_post_pianificato()

@@ -18,6 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from src.database.kg_operations import get_quality_score_fonti
 from src.tools.related_posts_tool import related_posts_tool
+from src.tools.post_quality_classifier import predici_qualita
 
 
 # ==============================================================
@@ -133,6 +134,9 @@ def drafter_node(state: dict) -> dict:
         "topic_corrente": piano["topic"],
     })
     bozza_finale = bozza + sezione_correlati
+     # Predice qualità con il classificatore fine-tunato
+    valutazione_qualita = predici_qualita(bozza_finale)
+    print(f"[DRAFTER] {valutazione_qualita['messaggio']}")
 
     # Preparazione Valutazione fonti nel HITL
     fonti_trovate = ricerca.get("fonti", [])

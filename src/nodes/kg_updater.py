@@ -5,6 +5,7 @@ Responsabilità:
 - Riceve la bozza approvata dal HITL
 - Legge topic e fonti direttamente dall'output del Researcher
 - Salva il post approvato nel Knowledge Graph
+- Salva esempio "approvato" nel classifier per il fine-tuning
 
 Nessuna chiamata LLM: tutte le informazioni sono già nello state.
 
@@ -12,7 +13,8 @@ Dipendenze:
     pip install neo4j
 """
 
-from database.kg_operations import inserisci_post
+from src.database.kg_operations import inserisci_post
+from src.tools.post_quality_classifier import post_quality_classifier_tool
 
 
 # ==============================================================
@@ -52,19 +54,15 @@ def kg_updater_node(state: dict) -> dict:
     # Topic: il topic del piano come lista
     topic = [piano["topic"]]
 
-    # Fonti: costruisce la lista delle fonti con i relativi punteggi e status di affidabilità
+    # Fonti: costruisce la lista con punteggi e status di affidabilità
     fonti = []
     for url in ricerca.get("fonti", []):
-
         score = valutazione_fonti.get(url)
-        
-        # Determina lo status: se il voto è 0 (rifiutato) allora "avoid", altrimenti "use"
         trust_status = "avoid" if score == 0 else "use"
-        
         fonti.append({
-            "url": url,
+            "url":           url,
             "quality_score": score,
-            "trust_status": trust_status
+            "trust_status":  trust_status,
         })
 
     # Inserisce il post nel KG
@@ -75,8 +73,17 @@ def kg_updater_node(state: dict) -> dict:
         topic=topic,
         fonti=fonti,
     )
+    print(f"[KG UPDATER] Post salvato nel KG con ID: {post_id}")
 
-    print(f"Post salvato nel KG con ID: {post_id}")
+    # Salva esempio "approvato" nel classifier per il fine-tuning
+    # Il post è stato approvato dall'utente → esempio positivo
+    risultato_classifier = post_quality_classifier_tool.invoke({
+        "testo":   bozza,
+        "label":   "approvato",
+        "regione": piano["regione"],
+        "topic":   piano["topic"],
+    })
+    print(f"[KG UPDATER] Classifier: {risultato_classifier}")
 
     return {
         **state,

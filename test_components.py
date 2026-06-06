@@ -281,6 +281,59 @@ def test_related_posts():
     })
     print(risultato if risultato else "Nessun correlato (DB vuoto — normale al primo run)")
     print("✓ Related Posts OK")
+# ==============================================================
+# 11. Post Quality Classifier
+# ==============================================================
+def test_classifier():
+    print("\n=== TEST POST QUALITY CLASSIFIER ===")
+    from src.tools.post_quality_classifier import (
+        post_quality_classifier_tool,
+        predici_qualita_tool,
+    )
+
+    # Esempio 1 — rifiutato
+    r1 = post_quality_classifier_tool.invoke({
+        "testo":   "La Valle dei Templi è un sito UNESCO ad Agrigento.",
+        "label":   "rifiutato",
+        "regione": "Sicilia",
+        "topic":   "Valle dei Templi",
+    })
+    print(r1)
+
+    # Esempio 2 — approvato
+    r2 = post_quality_classifier_tool.invoke({
+        "testo":   "Immaginate di passeggiare tra templi millenari al tramonto...",
+        "label":   "approvato",
+        "regione": "Sicilia",
+        "topic":   "Valle dei Templi",
+    })
+    print(r2)
+
+    # Esempio 3 — rifiutato (scatta fine-tuning: 2 rifiutati + 1 approvato)
+    r3 = post_quality_classifier_tool.invoke({
+        "testo":   "Le Isole Eolie sono un arcipelago vulcanico.",
+        "label":   "rifiutato",
+        "regione": "Sicilia",
+        "topic":   "Isole Eolie",
+    })
+    print(r3)
+
+    # Esempio 4 — approvato (ora 2+2 → fine-tuning garantito)
+    r4 = post_quality_classifier_tool.invoke({
+        "testo":   "Le Isole Eolie ti aspettano con vulcani attivi e acque cristalline...",
+        "label":   "approvato",
+        "regione": "Sicilia",
+        "topic":   "Isole Eolie",
+    })
+    print(r4)
+
+    # Test predizione
+    pred = predici_qualita_tool.invoke({
+        "testo": "Visitate il magnifico sito UNESCO di Agrigento..."
+    })
+    print(f"\nPredizione: {pred}")
+    assert "Probabilità" in pred
+    print("✓ Classifier OK")
 
 
 # ==============================================================
@@ -299,6 +352,7 @@ TESTS = {
     "drafter":          test_drafter,
     "kg_updater":       test_kg_updater,
     "related_posts":    test_related_posts,
+    "classifier":       test_classifier,
 }
 
 if __name__ == "__main__":
