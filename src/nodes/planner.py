@@ -28,7 +28,7 @@ from src.tools.post_quality_classifier import post_quality_classifier_tool
 # ==============================================================
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",
+    model="gemini-3.5-flash",
     google_api_key=os.environ.get("GEMINI_API_KEY"),
     temperature=0,
 )
@@ -63,7 +63,17 @@ def _cerca_topic(regione: str, topic_da_evitare: list[str]) -> str:
         f"(non già presente in questa lista: {da_evitare}). "
         f"Rispondi SOLO con il nome del luogo, niente altro.\n\n{risultati}"
     ))])
-    return risposta.content.strip()
+    if isinstance(risposta.content, str):
+        testo_topic = risposta.content
+    elif isinstance(risposta.content, list):
+        testo_topic = "\n".join(
+            b.get("text", "") if isinstance(b, dict) else str(b)
+            for b in risposta.content
+        )
+    else:
+        testo_topic = str(risposta.content)
+
+    return testo_topic.strip()
 
 
 # ==============================================================
